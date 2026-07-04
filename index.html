@@ -40,6 +40,9 @@
     td { padding: 15px; border-top: 1px solid #294050; font-size: 14px; }
     tbody tr:hover { background: #1a3040; }
     .item-name { font-weight: bold; }
+    .item-wrap { display: flex; align-items: center; gap: 12px; }
+    .item-icon { width: 52px; height: 40px; object-fit: contain; flex-shrink: 0; }
+    .item-icon-placeholder { width: 52px; height: 40px; flex-shrink: 0; }
     .price, .total { font-weight: bold; }
     .total { color: #7ee787; }
     .quantity {
@@ -67,7 +70,7 @@
   </div>
 
   <div class="cards">
-    <div class="card"><div class="card-title">VALOR TOTAL</div><div class="card-value green" id="grandTotal">R$ 0,00</div></div>
+    <div class="card"><div class="card-title">VALOR LÍQUIDO ESTIMADO</div><div class="card-value green" id="grandTotal">R$ 0,00</div></div>
     <div class="card"><div class="card-title">TOTAL DE ITENS</div><div class="card-value" id="totalItems">0</div></div>
     <div class="card"><div class="card-title">ITENS MONITORADOS</div><div class="card-value" id="monitoredItems">12</div></div>
   </div>
@@ -82,10 +85,19 @@
       <thead>
         <tr>
           <th>Item</th><th>Quantidade</th><th>Menor preço</th><th>Preço médio</th>
-          <th>Volume</th><th>Valor total</th><th>Mercado</th>
+          <th>Volume</th><th>Valor bruto</th><th>Taxas estimadas</th><th>Valor líquido</th><th>Mercado</th>
         </tr>
       </thead>
       <tbody id="marketTable"></tbody>
+      <tfoot>
+        <tr style="background:#1d3445;font-weight:bold;">
+          <td colspan="5" style="text-align:right;font-size:16px;">TOTAL GERAL</td>
+          <td class="total" id="footerGrossTotal" style="font-size:18px;">R$ 0,00</td>
+          <td id="footerFeeTotal" style="font-size:18px;">R$ 0,00</td>
+          <td class="total" id="footerNetTotal" style="font-size:18px;">R$ 0,00</td>
+          <td></td>
+        </tr>
+      </tfoot>
     </table>
   </div>
 
@@ -137,12 +149,19 @@ function renderTable() {
     const row = document.createElement("tr");
     const marketURL = "https://steamcommunity.com/market/listings/730/" + encodeURIComponent(item.name);
     row.innerHTML = `
-      <td class="item-name">${item.name}</td>
+      <td class="item-name">
+        <div class="item-wrap">
+          <div class="item-icon-placeholder" id="icon-wrap-${index}"></div>
+          <span>${item.name}</span>
+        </div>
+      </td>
       <td><input type="number" class="quantity" min="0" value="${item.quantity}" onchange="changeQuantity(${index}, this.value)"></td>
       <td class="price" id="price-${index}">--</td>
       <td id="median-${index}">--</td>
       <td id="volume-${index}">--</td>
-      <td class="total" id="total-${index}">R$ 0,00</td>
+      <td class="total" id="gross-${index}">R$ 0,00</td>
+      <td id="fee-${index}">R$ 0,00</td>
+      <td class="total" id="net-${index}">R$ 0,00</td>
       <td><a class="market-link" href="${marketURL}" target="_blank" rel="noopener noreferrer">Abrir mercado</a></td>`;
     tbody.appendChild(row);
   });
@@ -155,15 +174,54 @@ function changeQuantity(index, value) {
 }
 
 function calculateTotals() {
-  let grandTotal = 0, totalItems = 0;
+  let grossTotal = 0;
+  let feeTotal = 0;
+  let netTotal = 0;
+  let totalItems = 0;
+
   items.forEach((item, index) => {
-    const itemTotal = (item.price || 0) * item.quantity;
-    grandTotal += itemTotal;
+    const gross = (item.price || 0) * item.quantity;
+
+    // Estimativa prática para itens de CS2:
+    // aproximadamente 15% de taxas totais.
+    // A Steam pode aplicar arredondamentos por unidade.
+    const net = gross * 0.85;
+    const fee = gross - net;
+
+    grossTotal += gross;
+    feeTotal += fee;
+    netTotal += net;
     totalItems += item.quantity;
-    document.getElementById(`total-${index}`).textContent = formatBRL(itemTotal);
+
+    document.getElementById(`gross-${index}`).textContent = formatBRL(gross);
+    document.getElementById(`fee-${index}`).textContent = formatBRL(fee);
+    document.getElementById(`net-${index}`).textContent = formatBRL(net);
   });
-  document.getElementById("grandTotal").textContent = formatBRL(grandTotal);
+
+  // O card principal passa a mostrar o valor líquido estimado.
+  document.getElementById("grandTotal").textContent = formatBRL(netTotal);
+  document.getElementById("footerGrossTotal").textContent = formatBRL(grossTotal);
+  document.getElementById("footerFeeTotal").textContent = formatBRL(feeTotal);
+  document.getElementById("footerNetTotal").textContent = formatBRL(netTotal);
   document.getElementById("totalItems").textContent = totalItems;
+}
+
+async function loadItemIcons() {
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    try {
+      const response = await fetch(`/api/steam-image?item=${encodeURIComponent(item.name)}`);
+      const data = await response.json();
+
+      if (data.success && data.image) {
+        const wrap = document.getElementById(`icon-wrap-${index}`);
+        wrap.className = "";
+        wrap.innerHTML = `<img class="item-icon" src="${data.image}" alt="${item.name}" loading="lazy">`;
+      }
+    } catch (error) {
+      console.warn("Não foi possível carregar o ícone:", item.name);
+    }
+  }
 }
 
 async function updatePrices() {
@@ -180,7 +238,8 @@ async function updatePrices() {
       const response = await fetch(`/api/steam-price?item=${encodeURIComponent(item.name)}`);
       const data = await response.json();
       if (data.success) {
-        item.price = parseSteamPrice(data.lowest_price);
+        // O valor do inventário é calculado pelo PREÇO MÉDIO (median_price)
+        item.price = parseSteamPrice(data.median_price);
         document.getElementById(`price-${index}`).textContent = data.lowest_price || "--";
         document.getElementById(`median-${index}`).textContent = data.median_price || "--";
         document.getElementById(`volume-${index}`).textContent = data.volume || "--";
@@ -203,6 +262,7 @@ async function updatePrices() {
 
 loadQuantities();
 renderTable();
+loadItemIcons();
 calculateTotals();
 updatePrices();
 setInterval(updatePrices, 15 * 60 * 1000);
