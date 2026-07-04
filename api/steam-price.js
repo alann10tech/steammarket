@@ -17,9 +17,9 @@ function decodeHtml(text) {
 }
 
 async function getGroupedFactoryNewPrice(code) {
-  const url =
-    `https://steamcommunity.com/market/listings/730/${encodeURIComponent(code)}` +
-    `?category_Exterior=WearCategory0&appid=730&l=brazilian`;
+  const url = code === "G183D20BE063004"
+    ? "https://steamcommunity.com/market/listings/730/USP-S%20%7C%20Alpine%20Camo%20%28Factory%20New%29?l=brazilian&currency=7"
+    : `https://steamcommunity.com/market/listings/730/${encodeURIComponent(code)}?category_Exterior=WearCategory0&appid=730&l=brazilian&currency=7`;
 
   const response = await fetch(url, {
     headers: {
