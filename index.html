@@ -45,7 +45,7 @@
     .item-icon-placeholder { width: 52px; height: 40px; flex-shrink: 0; }
     .price, .total { font-weight: bold; }
     .total { color: #7ee787; }
-    .quantity {
+    .quantity, .money-input {
       width: 80px; padding: 8px; border-radius: 5px; border: 1px solid #3b5669;
       background: #0f1d27; color: white; text-align: center;
     }
@@ -84,8 +84,7 @@
     <table>
       <thead>
         <tr>
-          <th>Item</th><th>Quantidade</th><th>Menor preço</th><th>Preço médio</th>
-          <th>Volume</th><th>Valor bruto</th><th>Taxas estimadas</th><th>Valor líquido</th><th>Mercado</th>
+          <th>Item</th><th>Quantidade</th><th>Preço médio</th><th>Preço pago</th><th>Preço vendido</th><th>Valor bruto</th><th>Taxas estimadas</th><th>Valor líquido</th><th>Lucro</th><th>Mercado</th>
         </tr>
       </thead>
       <tbody id="marketTable"></tbody>
@@ -95,6 +94,7 @@
           <td class="total" id="footerGrossTotal" style="font-size:18px;">R$ 0,00</td>
           <td id="footerFeeTotal" style="font-size:18px;">R$ 0,00</td>
           <td class="total" id="footerNetTotal" style="font-size:18px;">R$ 0,00</td>
+          <td class="total" id="footerProfitTotal" style="font-size:18px;">R$ 0,00</td>
           <td></td>
         </tr>
       </tfoot>
@@ -122,8 +122,11 @@ const items = [
 
 function loadQuantities() {
   const saved = JSON.parse(localStorage.getItem("steamQuantities")) || {};
+  const financial = JSON.parse(localStorage.getItem("steamFinancial")) || {};
   items.forEach(item => {
     if (saved[item.name] !== undefined) item.quantity = saved[item.name];
+    item.paidPrice = financial[item.name]?.paidPrice || 0;
+    item.soldPrice = financial[item.name]?.soldPrice || 0;
   });
 }
 
@@ -131,6 +134,29 @@ function saveQuantities() {
   const quantities = {};
   items.forEach(item => quantities[item.name] = item.quantity);
   localStorage.setItem("steamQuantities", JSON.stringify(quantities));
+}
+
+function saveFinancial() {
+  const financial = {};
+  items.forEach(item => {
+    financial[item.name] = {
+      paidPrice: item.paidPrice || 0,
+      soldPrice: item.soldPrice || 0
+    };
+  });
+  localStorage.setItem("steamFinancial", JSON.stringify(financial));
+}
+
+function changePaidPrice(index, value) {
+  items[index].paidPrice = Number(value) || 0;
+  saveFinancial();
+  calculateTotals();
+}
+
+function changeSoldPrice(index, value) {
+  items[index].soldPrice = Number(value) || 0;
+  saveFinancial();
+  calculateTotals();
 }
 
 function formatBRL(value) {
@@ -156,12 +182,13 @@ function renderTable() {
         </div>
       </td>
       <td><input type="number" class="quantity" min="0" value="${item.quantity}" onchange="changeQuantity(${index}, this.value)"></td>
-      <td class="price" id="price-${index}">--</td>
       <td id="median-${index}">--</td>
-      <td id="volume-${index}">--</td>
+      <td><input type="number" class="money-input" min="0" step="0.01" value="${item.paidPrice || 0}" onchange="changePaidPrice(${index}, this.value)"></td>
+      <td><input type="number" class="money-input" min="0" step="0.01" value="${item.soldPrice || 0}" onchange="changeSoldPrice(${index}, this.value)"></td>
       <td class="total" id="gross-${index}">R$ 0,00</td>
       <td id="fee-${index}">R$ 0,00</td>
       <td class="total" id="net-${index}">R$ 0,00</td>
+      <td class="total" id="profit-${index}">R$ 0,00</td>
       <td><a class="market-link" href="${marketURL}" target="_blank" rel="noopener noreferrer">Abrir mercado</a></td>`;
     tbody.appendChild(row);
   });
@@ -177,32 +204,43 @@ function calculateTotals() {
   let grossTotal = 0;
   let feeTotal = 0;
   let netTotal = 0;
+  let profitTotal = 0;
   let totalItems = 0;
 
   items.forEach((item, index) => {
-    const gross = (item.price || 0) * item.quantity;
-
-    // Estimativa prática para itens de CS2:
-    // aproximadamente 15% de taxas totais.
-    // A Steam pode aplicar arredondamentos por unidade.
+    // Se houver preço vendido informado, ele é usado no cálculo.
+    // Caso contrário, usa o preço médio atual do mercado.
+    const referencePrice = item.soldPrice > 0 ? item.soldPrice : (item.price || 0);
+    const gross = referencePrice * item.quantity;
     const net = gross * 0.85;
     const fee = gross - net;
+    const cost = (item.paidPrice || 0) * item.quantity;
+    const profit = net - cost;
 
     grossTotal += gross;
     feeTotal += fee;
     netTotal += net;
+    profitTotal += profit;
     totalItems += item.quantity;
 
     document.getElementById(`gross-${index}`).textContent = formatBRL(gross);
     document.getElementById(`fee-${index}`).textContent = formatBRL(fee);
     document.getElementById(`net-${index}`).textContent = formatBRL(net);
+
+    const profitEl = document.getElementById(`profit-${index}`);
+    profitEl.textContent = formatBRL(profit);
+    profitEl.style.color = profit >= 0 ? "#7ee787" : "#ff7b72";
   });
 
-  // O card principal passa a mostrar o valor líquido estimado.
   document.getElementById("grandTotal").textContent = formatBRL(netTotal);
   document.getElementById("footerGrossTotal").textContent = formatBRL(grossTotal);
   document.getElementById("footerFeeTotal").textContent = formatBRL(feeTotal);
   document.getElementById("footerNetTotal").textContent = formatBRL(netTotal);
+
+  const footerProfit = document.getElementById("footerProfitTotal");
+  footerProfit.textContent = formatBRL(profitTotal);
+  footerProfit.style.color = profitTotal >= 0 ? "#7ee787" : "#ff7b72";
+
   document.getElementById("totalItems").textContent = totalItems;
 }
 
@@ -240,15 +278,13 @@ async function updatePrices() {
       if (data.success) {
         // O valor do inventário é calculado pelo PREÇO MÉDIO (median_price)
         item.price = parseSteamPrice(data.median_price);
-        document.getElementById(`price-${index}`).textContent = data.lowest_price || "--";
         document.getElementById(`median-${index}`).textContent = data.median_price || "--";
-        document.getElementById(`volume-${index}`).textContent = data.volume || "--";
         success++;
       } else {
-        document.getElementById(`price-${index}`).innerHTML = '<span class="error">Erro</span>';
+        document.getElementById(`median-${index}`).innerHTML = '<span class="error">Erro</span>';
       }
     } catch (error) {
-      document.getElementById(`price-${index}`).innerHTML = '<span class="error">Erro</span>';
+      document.getElementById(`median-${index}`).innerHTML = '<span class="error">Erro</span>';
     }
     calculateTotals();
     await new Promise(resolve => setTimeout(resolve, 400));
