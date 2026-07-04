@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monitor Steam Market</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      background: radial-gradient(circle at top left, #1b3a52 0%, transparent 35%),
+                  linear-gradient(135deg, #0b141d, #101d29);
+      color: #fff; min-height: 100vh; padding: 30px;
+    }
+    .container { max-width: 1300px; margin: auto; }
+    .header { margin-bottom: 25px; }
+    .header h1 { font-size: 30px; margin-bottom: 8px; }
+    .header p { color: #8fa9bd; font-size: 15px; }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 25px; }
+    .card { background: rgba(24,42,56,.95); border: 1px solid #29475c; border-radius: 12px; padding: 20px; }
+    .card-title { color: #8fa9bd; font-size: 13px; margin-bottom: 8px; }
+    .card-value { font-size: 26px; font-weight: bold; }
+    .green, .price, .market-link { color: #67c1f5; }
+    .toolbar {
+      display: flex; justify-content: space-between; align-items: center;
+      background: #182a38; padding: 15px 18px; border-radius: 10px 10px 0 0;
+      border: 1px solid #29475c; border-bottom: none;
+    }
+    .status { font-size: 14px; color: #9eb3c2; }
+    button {
+      background: linear-gradient(90deg,#47a5d8,#67c1f5); border: none; color: #fff;
+      padding: 11px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px;
+    }
+    button:hover { opacity: .9; }
+    button:disabled { opacity: .5; cursor: wait; }
+    .table-container { overflow-x: auto; background: #152532; border: 1px solid #29475c; border-radius: 0 0 10px 10px; }
+    table { width: 100%; border-collapse: collapse; min-width: 850px; }
+    thead { background: #1d3445; }
+    th { color: #8fa9bd; font-size: 12px; text-transform: uppercase; text-align: left; padding: 15px; }
+    td { padding: 15px; border-top: 1px solid #294050; font-size: 14px; }
+    tbody tr:hover { background: #1a3040; }
+    .item-name { font-weight: bold; }
+    .price, .total { font-weight: bold; }
+    .total { color: #7ee787; }
+    .quantity {
+      width: 80px; padding: 8px; border-radius: 5px; border: 1px solid #3b5669;
+      background: #0f1d27; color: white; text-align: center;
+    }
+    .market-link { text-decoration: none; font-size: 13px; }
+    .market-link:hover { text-decoration: underline; }
+    .loading { color: #f0c674; }
+    .error { color: #ff7b72; }
+    .footer { text-align: center; color: #607d91; margin-top: 20px; font-size: 12px; }
+    @media (max-width: 800px) {
+      body { padding: 15px; }
+      .cards { grid-template-columns: 1fr; }
+      .toolbar { flex-direction: column; gap: 12px; align-items: stretch; }
+      button { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>Steam Market Monitor</h1>
+    <p>Acompanhamento automático do valor das suas caixas e itens do CS2</p>
+  </div>
+
+  <div class="cards">
+    <div class="card"><div class="card-title">VALOR TOTAL</div><div class="card-value green" id="grandTotal">R$ 0,00</div></div>
+    <div class="card"><div class="card-title">TOTAL DE ITENS</div><div class="card-value" id="totalItems">0</div></div>
+    <div class="card"><div class="card-title">ITENS MONITORADOS</div><div class="card-value" id="monitoredItems">12</div></div>
+  </div>
+
+  <div class="toolbar">
+    <div class="status" id="status">Aguardando atualização...</div>
+    <button id="updateButton" onclick="updatePrices()">Atualizar preços</button>
+  </div>
+
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Item</th><th>Quantidade</th><th>Menor preço</th><th>Preço médio</th>
+          <th>Volume</th><th>Valor total</th><th>Mercado</th>
+        </tr>
+      </thead>
+      <tbody id="marketTable"></tbody>
+    </table>
+  </div>
+
+  <div class="footer">Os preços são obtidos do Steam Community Market.</div>
+</div>
+
+<script>
+const items = [
+  { name: "Dreams & Nightmares Case", quantity: 0 },
+  { name: "Recoil Case", quantity: 0 },
+  { name: "Snakebite Case", quantity: 0 },
+  { name: "Winter Offensive Weapon Case", quantity: 0 },
+  { name: "Glove Case", quantity: 0 },
+  { name: "Danger Zone Case", quantity: 0 },
+  { name: "Revolution Case", quantity: 0 },
+  { name: "Gallery Case", quantity: 0 },
+  { name: "Kilowatt Case", quantity: 0 },
+  { name: "Fracture Case", quantity: 0 },
+  { name: "Fever Case", quantity: 0 },
+  { name: "Sealed Genesis Terminal", quantity: 0 }
+];
+
+function loadQuantities() {
+  const saved = JSON.parse(localStorage.getItem("steamQuantities")) || {};
+  items.forEach(item => {
+    if (saved[item.name] !== undefined) item.quantity = saved[item.name];
+  });
+}
+
+function saveQuantities() {
+  const quantities = {};
+  items.forEach(item => quantities[item.name] = item.quantity);
+  localStorage.setItem("steamQuantities", JSON.stringify(quantities));
+}
+
+function formatBRL(value) {
+  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function parseSteamPrice(price) {
+  if (!price) return 0;
+  return Number(price.replace("R$", "").replace(/\./g, "").replace(",", ".").trim());
+}
+
+function renderTable() {
+  const tbody = document.getElementById("marketTable");
+  tbody.innerHTML = "";
+  items.forEach((item, index) => {
+    const row = document.createElement("tr");
+    const marketURL = "https://steamcommunity.com/market/listings/730/" + encodeURIComponent(item.name);
+    row.innerHTML = `
+      <td class="item-name">${item.name}</td>
+      <td><input type="number" class="quantity" min="0" value="${item.quantity}" onchange="changeQuantity(${index}, this.value)"></td>
+      <td class="price" id="price-${index}">--</td>
+      <td id="median-${index}">--</td>
+      <td id="volume-${index}">--</td>
+      <td class="total" id="total-${index}">R$ 0,00</td>
+      <td><a class="market-link" href="${marketURL}" target="_blank" rel="noopener noreferrer">Abrir mercado</a></td>`;
+    tbody.appendChild(row);
+  });
+}
+
+function changeQuantity(index, value) {
+  items[index].quantity = Number(value) || 0;
+  saveQuantities();
+  calculateTotals();
+}
+
+function calculateTotals() {
+  let grandTotal = 0, totalItems = 0;
+  items.forEach((item, index) => {
+    const itemTotal = (item.price || 0) * item.quantity;
+    grandTotal += itemTotal;
+    totalItems += item.quantity;
+    document.getElementById(`total-${index}`).textContent = formatBRL(itemTotal);
+  });
+  document.getElementById("grandTotal").textContent = formatBRL(grandTotal);
+  document.getElementById("totalItems").textContent = totalItems;
+}
+
+async function updatePrices() {
+  const button = document.getElementById("updateButton");
+  const status = document.getElementById("status");
+  button.disabled = true;
+  button.textContent = "Atualizando...";
+  status.innerHTML = '<span class="loading">Buscando preços no Steam Market...</span>';
+  let success = 0;
+
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    try {
+      const response = await fetch(`/api/steam-price?item=${encodeURIComponent(item.name)}`);
+      const data = await response.json();
+      if (data.success) {
+        item.price = parseSteamPrice(data.lowest_price);
+        document.getElementById(`price-${index}`).textContent = data.lowest_price || "--";
+        document.getElementById(`median-${index}`).textContent = data.median_price || "--";
+        document.getElementById(`volume-${index}`).textContent = data.volume || "--";
+        success++;
+      } else {
+        document.getElementById(`price-${index}`).innerHTML = '<span class="error">Erro</span>';
+      }
+    } catch (error) {
+      document.getElementById(`price-${index}`).innerHTML = '<span class="error">Erro</span>';
+    }
+    calculateTotals();
+    await new Promise(resolve => setTimeout(resolve, 400));
+  }
+
+  const now = new Date().toLocaleString("pt-BR");
+  status.textContent = `${success}/${items.length} preços atualizados • ${now}`;
+  button.disabled = false;
+  button.textContent = "Atualizar preços";
+}
+
+loadQuantities();
+renderTable();
+calculateTotals();
+updatePrices();
+setInterval(updatePrices, 15 * 60 * 1000);
+</script>
+</body>
+</html>
