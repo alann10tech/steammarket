@@ -65,7 +65,7 @@
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 1280px;
+      min-width: 1380px;
       table-layout: fixed;
     }
 
@@ -96,6 +96,7 @@
     th:nth-child(8), td:nth-child(8) { width: 125px; }
     th:nth-child(9), td:nth-child(9) { width: 115px; }
     th:nth-child(10), td:nth-child(10) { width: 105px; }
+    th:nth-child(11), td:nth-child(11) { width: 90px; }
 
     .item-wrap {
       display: grid;
@@ -165,6 +166,7 @@
     th:nth-child(8), td:nth-child(8) { width: 120px; }
     th:nth-child(9), td:nth-child(9) { width: 130px; }
     th:nth-child(10), td:nth-child(10) { width: 105px; }
+    th:nth-child(11), td:nth-child(11) { width: 90px; }
 
     .item-wrap {
       min-height: 48px;
@@ -197,7 +199,29 @@
       line-height: 1.3;
     }
 
-  </style>
+  
+    .toolbar-actions { display:flex; gap:10px; }
+    .secondary-btn { background:#29475c; }
+    .danger-btn { background:#9b2c2c; padding:7px 10px; font-size:12px; }
+    .modal-backdrop {
+      display:none; position:fixed; inset:0; background:rgba(0,0,0,.72);
+      align-items:center; justify-content:center; z-index:9999; padding:20px;
+    }
+    .modal-backdrop.show { display:flex; }
+    .modal {
+      width:min(620px,100%); background:#182a38; border:1px solid #36566c;
+      border-radius:12px; padding:22px; box-shadow:0 20px 60px rgba(0,0,0,.45);
+    }
+    .modal h2 { margin-bottom:8px; }
+    .modal p { color:#9eb3c2; margin-bottom:16px; line-height:1.4; }
+    .modal input[type="url"] {
+      width:100%; padding:12px; background:#0f1d27; color:#fff;
+      border:1px solid #3b5669; border-radius:6px; margin-bottom:14px;
+    }
+    .modal-actions { display:flex; justify-content:flex-end; gap:10px; }
+    .row-actions { display:flex; justify-content:center; gap:6px; }
+
+</style>
 </head>
 <body>
 <div class="container">
@@ -214,14 +238,17 @@
 
   <div class="toolbar">
     <div class="status" id="status">Aguardando atualização...</div>
-    <button id="updateButton" onclick="updatePrices()">Atualizar preços</button>
+    <div class="toolbar-actions">
+      <button class="secondary-btn" onclick="openAddItemModal()">Adicionar item</button>
+      <button id="updateButton" onclick="updatePrices()">Atualizar preços</button>
+    </div>
   </div>
 
   <div class="table-container">
     <table>
       <thead>
         <tr>
-          <th>Item</th><th>Quantidade</th><th>Preço médio</th><th>Preço pago</th><th>Preço vendido</th><th>Valor bruto</th><th>Taxas estimadas</th><th>Valor líquido</th><th>Lucro</th><th>Mercado</th>
+          <th>Item</th><th>Quantidade</th><th>Preço médio</th><th>Preço pago</th><th>Preço vendido</th><th>Valor bruto</th><th>Taxas estimadas</th><th>Valor líquido</th><th>Lucro</th><th>Mercado</th><th>Ações</th>
         </tr>
       </thead>
       <tbody id="marketTable"></tbody>
@@ -241,8 +268,21 @@
   <div class="footer">Os preços são obtidos do Steam Community Market.</div>
 </div>
 
+
+<div class="modal-backdrop" id="addItemModal">
+  <div class="modal">
+    <h2>Adicionar item</h2>
+    <p>Cole o link completo do item no Steam Community Market. O monitor buscará nome, preço e imagem automaticamente.</p>
+    <input type="url" id="newItemUrl" placeholder="https://steamcommunity.com/market/listings/730/...">
+    <div class="modal-actions">
+      <button class="secondary-btn" onclick="closeAddItemModal()">Cancelar</button>
+      <button onclick="addItemFromUrl()">Adicionar</button>
+    </div>
+  </div>
+</div>
+
 <script>
-const items = [
+const baseItems = [
   { name: "Dreams & Nightmares Case", quantity: 0 },
   { name: "Recoil Case", quantity: 0 },
   { name: "Snakebite Case", quantity: 0 },
@@ -265,10 +305,93 @@ const items = [
   { name: "Budapest 2025 Legends Sticker Capsule", quantity: 0 },
   { name: "Budapest 2025 Contenders Sticker Capsule", quantity: 0 },
   { name: "Budapest 2025 Contenders Autograph Capsule", quantity: 0 },
-  { name: "Galil AR | Green Apple (Factory New)", quantity: 0 },
-  { name: "USP-S | Alpine Camo (Factory New)", quantity: 0 },
-  { name: "SSG 08 | Zeno (Factory New)", quantity: 0 }
+  { name: "Galil AR | Green Apple (Factory New)", marketName: "G180D20A6023004", quantity: 0 },
+  { name: "USP-S | Alpine Camo (Factory New)", marketName: "G183D20BE063004", quantity: 0 },
+  { name: "SSG 08 | Zeno (Factory New)", marketName: "G18282081043004", quantity: 0 }
 ];
+
+let customItems = JSON.parse(localStorage.getItem("steamCustomItems")) || [];
+let items = [...baseItems, ...customItems];
+
+function saveCustomItems() {
+  localStorage.setItem("steamCustomItems", JSON.stringify(customItems));
+}
+
+function openAddItemModal() {
+  document.getElementById("newItemUrl").value = "";
+  document.getElementById("addItemModal").classList.add("show");
+  document.getElementById("newItemUrl").focus();
+}
+
+function closeAddItemModal() {
+  document.getElementById("addItemModal").classList.remove("show");
+}
+
+async function addItemFromUrl() {
+  const input = document.getElementById("newItemUrl");
+  const url = input.value.trim();
+
+  if (!url.includes("steamcommunity.com/market/listings/730/")) {
+    alert("Cole um link válido do Steam Community Market para CS2.");
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/steam-item-info?url=${encodeURIComponent(url)}`);
+    const data = await response.json();
+
+    if (!data.success) throw new Error(data.error || "Não foi possível identificar o item.");
+
+    const duplicate = items.some(i =>
+      (i.marketName || i.name) === data.marketName || i.name === data.name
+    );
+
+    if (duplicate) {
+      alert("Esse item já está cadastrado.");
+      return;
+    }
+
+    const newItem = {
+      name: data.name,
+      marketName: data.marketName,
+      quantity: 0,
+      custom: true
+    };
+
+    customItems.push(newItem);
+    items.push(newItem);
+    saveCustomItems();
+    closeAddItemModal();
+    renderTable();
+    loadItemIcons();
+    calculateTotals();
+    document.getElementById("monitoredItems").textContent = items.length;
+    await updatePrices();
+
+  } catch (error) {
+    alert(error.message || "Erro ao adicionar item.");
+  }
+}
+
+function deleteCustomItem(index) {
+  const item = items[index];
+  if (!item.custom) {
+    alert("Os itens originais do monitor não podem ser excluídos por este botão.");
+    return;
+  }
+
+  if (!confirm(`Excluir ${item.name}?`)) return;
+
+  customItems = customItems.filter(i =>
+    !((i.marketName || i.name) === (item.marketName || item.name))
+  );
+  saveCustomItems();
+  items = [...baseItems, ...customItems];
+  renderTable();
+  loadItemIcons();
+  calculateTotals();
+  document.getElementById("monitoredItems").textContent = items.length;
+}
 
 function loadQuantities() {
   const saved = JSON.parse(localStorage.getItem("steamQuantities")) || {};
@@ -339,7 +462,8 @@ function renderTable() {
       <td id="fee-${index}">R$ 0,00</td>
       <td class="total" id="net-${index}">R$ 0,00</td>
       <td class="total" id="profit-${index}">R$ 0,00</td>
-      <td><a class="market-link" href="${marketURL}" target="_blank" rel="noopener noreferrer">Abrir mercado</a></td>`;
+      <td><a class="market-link" href="${marketURL}" target="_blank" rel="noopener noreferrer">Abrir mercado</a></td>
+      <td><div class="row-actions">${item.custom ? `<button class="danger-btn" onclick="deleteCustomItem(${index})">Excluir</button>` : "—"}</div></td>`;
     tbody.appendChild(row);
   });
 }
@@ -447,6 +571,7 @@ async function updatePrices() {
 }
 
 loadQuantities();
+document.getElementById("monitoredItems").textContent = items.length;
 renderTable();
 loadItemIcons();
 calculateTotals();
